@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import re
+import random
 
 from config import *
 
@@ -16,6 +17,7 @@ WB_BLOG_TYPE = 'mblogtype'
 WB_REPOSTS = 'reposts_count'
 WB_COMMENTS = 'comments_count'
 WB_ATTITUDES = 'attitudes_count'
+WB_RETWEETED = 'retweeted_status'
 
 U_DESCRIPTION = 'description'
 U_VERIFIED = 'verified_reason'
@@ -69,7 +71,7 @@ HEADERS = {'User-Agent':'Mozilla/5.0 (Windows NT 6.1; rv,2.0.1) Gecko/20100101 F
 RE_TAG_COMPILE = re.compile('</?\w+[^>]*>') 
 
 
-class UserJsonAnalyzer:
+class IndexJsonAnalyzer:
     def __init__(self, json_dict :dict):
         self.__json_dict = json_dict
 
@@ -155,6 +157,27 @@ class CardJsonAnalyzer:
         return self.__json_dict['mblog']['id']
 
 
+    @property
+    def __retweeted_json(self) -> dict:
+        return self.__json_dict['mblog'][WB_RETWEETED] \
+                if self.is_retweeted()  \
+                else None
+
+
+    def is_retweeted(self) -> bool:
+        '''是否是转发评论的微博 (RT retweeted)'''
+        return WB_RETWEETED in self.__json_dict['mblog']
+
+    
+    @property
+    def retweeted(self):
+        if not self.is_retweeted():
+            return None
+        #这里偷懒了，加了个mblog上去，为了适配make_weibo_str
+        return CardJsonAnalyzer({'mblog':self.__json_dict['mblog'][WB_RETWEETED]}, 
+                int(self.__retweeted_json['id'][-5:]))  #取后五位作id
+
+
 class WeiboJsonAnalyzer:
     def __init__(self, json_dict :dict):
         self.__json_dict = json_dict
@@ -197,7 +220,7 @@ class WeiboJsonAnalyzer:
 
 
 class WeiboPageManager:
-    def __init__(self, first_page :WeiboJsonAnalyzer, user_info :UserJsonAnalyzer):
+    def __init__(self, first_page :WeiboJsonAnalyzer, user_info :IndexJsonAnalyzer):
         self.__page_stack = []
         self.__user_info = user_info
         self.__page = 1
@@ -386,11 +409,13 @@ def make_weibo_str(analyzer :WeiboJsonAnalyzer, card_obj :CardJsonAnalyzer):
     ln2 = clean_text(wb_text)
     ln3 = '\n' + ' | '.join((wb_reposts, wb_comment, wb_attitude))
     ln4 = 'ID : {0}'.format(wb_id)
+    ln5 = ('RETWEET : \n' + '='*(os.get_terminal_size()[0]) + '\n' + (make_weibo_str(analyzer, card_obj.retweeted)[1:]) + '='*(os.get_terminal_size()[0])
+                        ) if card_obj.is_retweeted() else ''
 
-    return '\n' + ('-'*(os.get_terminal_size()[0] - len(ln4))) + ln4 + '\n'.join((ln1, ln2, ln3))
+    return '\n' + ('-'*(os.get_terminal_size()[0] - len(ln4))) + ln4 + '\n'.join((ln1, ln2, ln3, ln5))
 
 
-def make_user_profile_str(analyzer :UserJsonAnalyzer):
+def make_user_profile_str(analyzer :IndexJsonAnalyzer):
     u_name = 'USER: ' + analyzer.user_info[U_NAME]
     u_desc = 'DESCRIBE: ' + analyzer.user_info[U_DESCRIPTION]
     u_verify = 'VERIFY: ' + analyzer.get_user_info_by_key(U_VERIFIED)
@@ -465,7 +490,7 @@ def check_response(r :requests.Response):
         sys.exit(1)
 
 
-def get_first_page(uid :int, u_analyzer :UserJsonAnalyzer):
+def get_first_page(uid :int, u_analyzer :IndexJsonAnalyzer):
     cid = u_analyzer.get_containerid_by_key('weibo')
     uid = str(uid)
 
@@ -505,7 +530,7 @@ if __name__ == '__main__':
         uid = int(sys.argv[-1])
     
     rindex = request_get_index(uid)
-    ua = UserJsonAnalyzer(json.loads(rindex.text))
+    ua = IndexJsonAnalyzer(json.loads(rindex.text))
     wa = get_first_page(uid, ua)
 
     
